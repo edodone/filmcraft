@@ -153,7 +153,9 @@ fn builtin_templates_apply_and_thumbnail() {
         let r = s.execute("graphics.template.apply", json!({"template": id})).unwrap();
         assert!(!texts(&s, clip_of(&r)).is_empty(), "{id}");
         let th = s.execute("graphics.template.thumbnail", json!({"template": id, "width": 160})).unwrap();
-        assert_eq!((th["width"].as_u64(), th["height"].as_u64()), (Some(160), Some(90)));
+        // the thumbnail has the template's own shape (16:9, or 9:16 for the vertical ones)
+        let canvas = (e["canvas"][0].as_u64().unwrap(), e["canvas"][1].as_u64().unwrap());
+        assert_eq!((th["width"].as_u64(), th["height"].as_u64()), (Some(160), Some(160 * canvas.1 / canvas.0)));
         let png = filmcraft_project::gtemplate::base64_decode(th["pngBase64"].as_str().unwrap()).unwrap();
         assert!(png.starts_with(b"\x89PNG"));
         let (_, _, rgba) = super::thumbnail(&super::find_template(&s, id).unwrap().template, 160);
