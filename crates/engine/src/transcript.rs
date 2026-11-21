@@ -253,7 +253,9 @@ fn generate_background(s: &mut Session, p: &Value, items: Vec<ItemId>) -> Result
                     *lock(&prog.status) = format!("Transcribing {} of {n_clips}: {status}", k + 1);
                     !prog.cancel.load(Ordering::Relaxed)
                 };
-                let mut tr = t.transcribe(&audio, &opts, &mut progress).map_err(|e| if prog.cancel.load(Ordering::Relaxed) { "stopped".to_string() } else { e.to_string() })?;
+                let mut tr = t
+                    .transcribe(&audio, &opts, &mut progress)
+                    .map_err(|e| if prog.cancel.load(Ordering::Relaxed) { "stopped".to_string() } else { e.to_string() })?;
                 tr.normalize();
                 done.push((*item, tr));
             }
