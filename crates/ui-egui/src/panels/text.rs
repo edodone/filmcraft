@@ -74,6 +74,18 @@ fn tool_button(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, icon: Icon, i
     resp.on_hover_text(label).clicked() && enabled
 }
 
+/// A toolbar button that opens a menu: [`tool_button`]'s look, but the response is returned for the popup.
+fn menu_button(app: &mut FilmcraftApp, ui: &mut egui::Ui, r: Rect, icon: Icon, id: &str, label: &str) -> egui::Response {
+    let t = app.tokens;
+    let resp = ui.interact(r, egui::Id::unique(("text-tool", id)), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(r, 3.0, t.hover);
+    }
+    icons::paint(ui.painter(), r.shrink(5.0), icon, t.icon);
+    app.auto.add(id, r, label);
+    resp.on_hover_text(label)
+}
+
 fn captions(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     let t = app.tokens;
     let project = app.session.project.clone();
@@ -192,6 +204,60 @@ fn captions(app: &mut FilmcraftApp, ui: &mut egui::Ui, rect: Rect) {
     {
         crate::panels::caption_split::open(app, c.0);
     }
+    // one-click looks for the track's style, and graphic templates made into a clip per caption
+    let r = slot(&mut x);
+    let look = menu_button(app, ui, r, Icon::Sparkle, "text.captions.looks", tl!("Caption styles"));
+    egui::Popup::menu(&look).show(|ui| {
+        for (name, builtin) in filmcraft_engine::caption_styles::names(&app.session) {
+            ui.horizontal(|ui| {
+                let resp = ui.selectable_label(false, &name);
+                app.auto.add_response(&format!("text.captions.look.{name}"), &resp, &name);
+                if resp.clicked() {
+                    actions.push(("captions.applyStylePreset".into(), json!({"track": track.id.0, "preset": name})));
+                    ui.close();
+                }
+                if !builtin {
+                    let del = ui.small_button("×");
+                    app.auto.add_response(&format!("text.captions.look.delete.{name}"), &del, tl!("Delete this saved style"));
+                    if del.on_hover_text(tl!("Delete this saved style")).clicked() {
+                        actions.push(("captions.deleteStylePreset".into(), json!({"name": name})));
+                    }
+                }
+            });
+        }
+        ui.separator();
+        let save = ui.button(tl!("Save current style…"));
+        app.auto.add_response("text.captions.look.save", &save, tl!("Save current style…"));
+        if save.clicked() {
+            crate::panels::caption_style_save::open(app, track.id.0);
+            ui.close();
+        }
+    });
+    let r = slot(&mut x);
+    let templates = menu_button(app, ui, r, Icon::Rectangle, "text.captions.templates", tl!("Apply a graphic template to the captions"));
+    egui::Popup::menu(&templates).show(|ui| {
+        let replace_key = egui::Id::unique("caption-template-replace");
+        let mut replace = ui.data(|d| d.get_temp::<bool>(replace_key)).unwrap_or(false);
+        if ui.checkbox(&mut replace, tl!("Replace the captions")).changed() {
+            ui.data_mut(|d| d.insert_temp(replace_key, replace));
+        }
+        ui.separator();
+        let list = app.session.execute("graphics.template.list", json!({"category": "Captions"})).unwrap_or(Value::Null);
+        for t in list.as_array().into_iter().flatten() {
+            let (Some(id), Some(name)) = (t["id"].as_str(), t["name"].as_str()) else { continue };
+            let resp = ui.button(name);
+            app.auto.add_response(&format!("text.captions.template.{id}"), &resp, name);
+            if resp.clicked() {
+                let which: Vec<u64> = sel.iter().map(|c| c.0).collect();
+                let mut p = json!({"template": id, "replace": replace});
+                if !which.is_empty() {
+                    p["captions"] = json!(which);
+                }
+                actions.push(("graphics.template.applyToCaptions".into(), p));
+                ui.close();
+            }
+        }
+    });
     let bar_bottom = bar.max.y + row;
 
     // ---- style strip: its controls wrap onto more rows in a narrow panel, so the strip is as tall

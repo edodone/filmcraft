@@ -322,6 +322,11 @@ fn fold_undo(s: &mut Session, before: usize, label: &str) {
 }
 
 fn apply_template(s: &mut Session, p: &Value) -> Result<Value> {
+    apply_template_for(s, p, None)
+}
+
+/// [`apply_template`], the clip lasting `duration` instead of the template's own when given.
+fn apply_template_for(s: &mut Session, p: &Value, duration: Option<Tick>) -> Result<Value> {
     let key = str_p(p, "template").or_else(|| str_p(p, "id")).or_else(|| str_p(p, "name")).ok_or_else(|| bad("graphics.template.apply", "need `template`"))?;
     let entry = find_template(s, key)?;
     let t = entry.template;
@@ -329,7 +334,7 @@ fn apply_template(s: &mut Session, p: &Value) -> Result<Value> {
     let (w, h) = s.active_sequence().map(|q| (q.settings.width, q.settings.height)).ok_or(EngineError::NoSequence)?;
     let (layers, meta) = t.instantiate((w, h));
     let before = s.history.undo.len();
-    let dur = t.duration;
+    let dur = duration.unwrap_or(t.duration);
     let clip = place_video_clip(s, "graphics.template.apply", &t.name, p, "Apply Graphics Template", layers, move |pr, (w, h, rate)| {
         let src = crate::graphics::graphic_source(pr, w, h, rate);
         (src, rate.snap_nearest(dur))
@@ -352,6 +357,66 @@ fn apply_template(s: &mut Session, p: &Value) -> Result<Value> {
     fold_undo(s, before, "Apply Graphics Template");
     s.state.graphic_layers.clear();
     Ok(json!({"clip": clip.0, "template": t.id, "name": t.name, "controls": t.controls.iter().map(control_json).collect::<Vec<_>>()}))
+}
+
+/// Most captions one `graphics.template.applyToCaptions` call turns into clips.
+const MAX_CAPTION_CLIPS: usize = 2000;
+
+/// Make a clip from a template for each caption: it starts and ends with the caption and the
+/// template's first text property takes the caption's text. The captions are kept unless
+/// `replace` is true. One undo step; nothing changes when one clip cannot be placed.
+fn apply_to_captions(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "graphics.template.applyToCaptions";
+    let key = str_p(p, "template").or_else(|| str_p(p, "id")).or_else(|| str_p(p, "name")).ok_or_else(|| bad(cmd, "need `template`"))?;
+    let template = find_template(s, key)?.template;
+    let text_control = template
+        .controls
+        .iter()
+        .find(|c| c.kind == ControlKind::Text)
+        .map(|c| c.id.clone())
+        .ok_or_else(|| bad(cmd, "the template has no text property to put the caption's text in"))?;
+    let wanted: Vec<ClipId> = match p.get("captions").and_then(Value::as_array) {
+        Some(a) => a.iter().filter_map(Value::as_u64).map(ClipId).collect(),
+        None => s.state.caption_selection.clone(),
+    };
+    let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
+    let mut caps: Vec<(ClipId, Tick, Tick, String)> = q
+        .caption_tracks
+        .iter()
+        .flat_map(|t| &t.captions)
+        .filter(|c| wanted.is_empty() || wanted.contains(&c.id))
+        .map(|c| (c.id, c.start, c.duration, c.text.clone()))
+        .collect();
+    caps.sort_by_key(|c| c.1);
+    if caps.is_empty() {
+        return Err(bad(cmd, "no captions to apply the template to"));
+    }
+    if caps.len() > MAX_CAPTION_CLIPS {
+        return Err(bad(cmd, format!("at most {MAX_CAPTION_CLIPS} captions at once; select fewer")));
+    }
+    let before = s.history.undo.len();
+    let mut clips = Vec::with_capacity(caps.len());
+    for (_, start, duration, text) in &caps {
+        let mut one = json!({"template": key, "time": start.0, "values": {text_control.clone(): text}});
+        if let Some(t) = p.get("track") {
+            one["track"] = t.clone();
+        }
+        match apply_template_for(s, &one, Some(*duration)) {
+            Ok(r) => clips.push(r["clip"].as_u64().unwrap_or(0)),
+            Err(e) => {
+                while s.history.undo.len() > before {
+                    let _ = s.undo();
+                }
+                s.history.redo.clear();
+                return Err(e);
+            }
+        }
+    }
+    if bool_p(p, "replace").unwrap_or(false) {
+        s.execute("captions.delete", json!({"captions": caps.iter().map(|c| c.0 .0).collect::<Vec<_>>()}))?;
+    }
+    fold_undo(s, before, "Apply Template to Captions");
+    Ok(json!({"clips": clips, "template": template.id, "captions": caps.len()}))
 }
 
 fn template_controls(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1209,6 +1274,14 @@ pub fn commands() -> Vec<CommandSpec> {
             r#"{"template":id|name|path,"values":{control id or name: value}?,"time":ticks?,"track":index?}"#,
             has_seq,
             apply_template,
+        ),
+        spec(
+            "graphics.template.applyToCaptions",
+            "Apply Graphics Template to Captions",
+            &[],
+            r#"{"template":id|name|path,"captions":[id]? (default: the selected captions, else all),"replace":bool=false (delete the captions),"track":index?}"#,
+            has_captions,
+            apply_to_captions,
         ),
         spec(
             "graphics.template.export",

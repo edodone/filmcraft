@@ -703,6 +703,58 @@ pub fn builtin_templates() -> Vec<GraphicsTemplate> {
         t.graphic.roll = Roll { mode: RollMode::CrawlLeft, start_off_screen: true, end_off_screen: true, ..Default::default() };
         v.push(t);
     }
+    // Subtitles: one text layer whose text a caption fills in (`graphics.template.applyToCaptions`).
+    // A box for a 16:9 frame …
+    {
+        let mut text = text(1, "Subtitle", "Subtitle text", (960.0, 960.0), 60.0, "Bold");
+        set(&mut text, "align", ParamValue::Choice(1));
+        set(&mut text, "fill_color", rgb(0xffffff));
+        set(&mut text, "background", ParamValue::Bool(true));
+        set(&mut text, "background_color", rgb(0x000000));
+        set(&mut text, "background_opacity", ParamValue::Float(75.0));
+        set(&mut text, "background_size", ParamValue::Float(16.0));
+        v.push(builtin(
+            "subtitle-box",
+            "Subtitle – Box",
+            "Captions",
+            "White text on a dark box, low in a 16:9 frame.",
+            3,
+            vec![text],
+            vec![
+                ctl("text", "Text", 1, "text"),
+                ctl("text_color", "Text Color", 1, "fill_color"),
+                ctl("box_color", "Box Color", 1, "background_color"),
+                slider("size", "Size", 1, "size", 24.0, 140.0),
+                ctl("font", "Font", 1, "font"),
+            ],
+        ));
+    }
+    // … and an outlined one for a 9:16 frame (Reels, Shorts, TikTok).
+    {
+        let mut text = text(1, "Subtitle", "Subtitle text", (540.0, 1500.0), 76.0, "Bold");
+        set(&mut text, "align", ParamValue::Choice(1));
+        set(&mut text, "fill_color", rgb(0xffffff));
+        set(&mut text, "stroke", ParamValue::Bool(true));
+        set(&mut text, "stroke_color", rgb(0x000000));
+        set(&mut text, "stroke_width", ParamValue::Float(8.0));
+        let mut t = builtin(
+            "subtitle-reels",
+            "Subtitle – Reels",
+            "Captions",
+            "Bold outlined text low in a 9:16 vertical frame.",
+            3,
+            vec![text],
+            vec![
+                ctl("text", "Text", 1, "text"),
+                ctl("text_color", "Text Color", 1, "fill_color"),
+                ctl("outline_color", "Outline Color", 1, "stroke_color"),
+                slider("size", "Size", 1, "size", 24.0, 160.0),
+                ctl("font", "Font", 1, "font"),
+            ],
+        );
+        t.canvas = [1080, 1920];
+        v.push(t);
+    }
     v
 }
 
